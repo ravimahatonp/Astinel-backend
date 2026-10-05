@@ -6,6 +6,7 @@ use crate::database::repositories::notification_repository::NotificationReposito
 use crate::database::repositories::*;
 use crate::jobs::queue::JobQueue;
 use crate::services::{ContractService, GitHubConfig, GitHubService, ScanService};
+use std::sync::Arc;
 
 pub struct AppState {
     pub pool: DbPool,
@@ -44,17 +45,25 @@ impl AppState {
                 .expect("failed to install Prometheus recorder")
         };
 
+        let scan_status_cache = ScanStatusCache::new(redis.clone());
+        let github_service = GitHubConfig::from_env().map(GitHubService::new);
+        let github_service_arc = github_service.as_ref().map(|gh| Arc::new(GitHubService::new(gh.config().clone())));
+
+        let scan_service = ScanService::with_cache_and_github(
+            pool.clone(),
+            queue.clone(),
+            ProjectRepositoryImpl::new(pool.clone()),
+            scan_status_cache.clone(),
+            github_service_arc,
+        );
+
         Self {
-            scan_service: ScanService::new(
-                pool.clone(),
-                queue.clone(),
-                ProjectRepositoryImpl::new(pool.clone()),
-            ),
+            scan_service,
             queue,
             session_store: SessionStore::new(redis.clone()),
             rate_limiter: RateLimiter::new(redis.clone()),
             webhook_dedup: WebhookDedup::new(redis.clone()),
-            scan_status_cache: ScanStatusCache::new(redis.clone()),
+            scan_status_cache,
             nonce_store: NonceStore::new(),
             jwt_service,
             metrics_handle,
@@ -68,7 +77,7 @@ impl AppState {
             api_key_repository: ApiKeyRepositoryImpl::new(pool.clone()),
             ai_provider: provider::create_provider(),
             notification_repository: NotificationRepositoryImpl::new(pool.clone()),
-            github_service: GitHubConfig::from_env().map(GitHubService::new),
+            github_service,
             contract_service: ContractService::new(pool.clone()),
             pool,
         }

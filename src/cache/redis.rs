@@ -122,6 +122,7 @@ impl WebhookDedup {
     }
 }
 
+#[derive(Clone)]
 pub struct ScanStatusCache {
     redis: RedisPool,
 }
